@@ -1,7 +1,10 @@
+import os
 import asyncio
 import logging
+from aiohttp import web
 from aiogram import Bot, Dispatcher
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
 from config import TOKEN
 from database import init_db, get_active_vip_users, check_expiring_subscriptions
 from handlers import router
@@ -10,6 +13,21 @@ from math_utils import calculate_net_spread
 
 sent_spreads_cache = {}
 
+# --- ВЕБ-СЕРВЕР ДЛЯ RENDER (Чтобы не закрывал по таймауту портов) ---
+async def handle(request):
+    return web.Response(text="Bot is active!")
+
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get('/', handle)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.environ.get("PORT", 8080))
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    await site.start()
+
+
+# --- ФОНОВЫЕ ЗАДАЧИ ---
 async def subscription_checker(bot: Bot):
     """Каждый час проверяем, у кого подписка кончается завтра"""
     while True:
@@ -99,8 +117,14 @@ async def background_p2p_scanner(bot: Bot):
             logging.error(f"Ошибка сканера: {e}")
         await asyncio.sleep(4)
 
+
+# --- ТОЧКА ВХОДА ---
 async def main():
     logging.basicConfig(level=logging.INFO)
+    
+    # Запускаем веб-сервер, чтобы Render прошел Port Scan
+    await start_web_server()
+    
     init_db()
     bot = Bot(token=TOKEN)
     dp = Dispatcher()
@@ -109,6 +133,7 @@ async def main():
     await bot.delete_webhook(drop_pending_updates=True)
     asyncio.create_task(background_p2p_scanner(bot))
     asyncio.create_task(subscription_checker(bot))
+    
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
