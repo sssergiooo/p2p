@@ -1,3 +1,7 @@
+import os
+
+# Бот берет твой ID из переменных Render, которые ты только что ввел!
+ADMIN_ID = int(os.getenv("ADMIN_ID", 0))  
 import sqlite3
 import asyncio
 from aiogram import Router, F
@@ -6,7 +10,6 @@ from aiogram.types import (
     LabeledPrice, PreCheckoutQuery
 )
 from aiogram.filters import Command
-from config import ADMIN_ID
 from database import get_user, update_user_field, set_user_vip, is_user_vip
 from parsers import scan_p2p_spreads
 from math_utils import calculate_net_spread
