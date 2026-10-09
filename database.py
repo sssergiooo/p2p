@@ -61,7 +61,7 @@ def get_user(user_id: int) -> dict:
             "min_orders": 10
         }
 
-    # Гарантия вечного VIP для админа
+    # Жесткая гарантия вечного VIP для админа
     if is_admin and (row[6] == 0 or row[4] != "VIP Навсегда"):
         cursor.execute("UPDATE users SET is_vip = 1, subscription_type = 'VIP Навсегда', expire_date = 'Навсегда' WHERE user_id = ?", (user_id,))
         conn.commit()
@@ -87,7 +87,6 @@ def get_user(user_id: int) -> dict:
     }
 
 def update_user_field(user_id: int, field: str, value):
-    # Жестко гарантируем существование пользователя перед обновлением поля
     get_user(user_id)
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
@@ -123,6 +122,10 @@ def is_user_vip(user_id: int) -> bool:
 def get_active_vip_users():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
+    # Жесткая принудительная активация VIP админа
+    cursor.execute("UPDATE users SET is_vip = 1, subscription_type = 'VIP Навсегда', expire_date = 'Навсегда' WHERE user_id = ?", (ADMIN_ID,))
+    conn.commit()
+
     cursor.execute("""
         SELECT user_id, currency, amount, min_net_spread, payment_method, min_orders 
         FROM users WHERE is_active = 1 AND is_vip = 1
