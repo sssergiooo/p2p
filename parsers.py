@@ -1,89 +1,104 @@
-import aiohttp
+import asyncio
 import logging
+import aiohttp
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-    "Content-Type": "application/json",
-    "Accept": "application/json"
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Origin": "https://www.bybit.com",
+    "Referer": "https://www.bybit.com/",
+    "Content-Type": "application/json"
 }
 
-# 🟢 ЗАКУПКА СТРОГО НА BYBIT P2P
-async def fetch_bybit_buy(token="USDT", currency="RUB", amount=500.0) -> float:
-    url = "https://api2.bybit.com/fiat/otc/item/online"
+# 🟢 ЗАКУПКА BYBIT P2P
+async def fetch_bybit_buy(session: aiohttp.ClientSession, token="USDT", currency="RUB", amount=500.0) -> float:
+    urls = [
+        "https://api2.bybit.com/fiat/otc/item/online",
+        "https://api.bybit.com/v5/p2p/item/online"
+    ]
     payload = {
         "userId": "",
         "tokenId": token,
         "currencyId": currency,
         "payment": [],
-        "side": "1",  # 1 = BUY (закуп)
+        "side": "1",  # 1 = BUY
         "size": "10",
         "page": "1",
         "amount": str(amount) if amount else ""
     }
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=payload, headers=HEADERS, timeout=7) as resp:
+    for url in urls:
+        try:
+            async with session.post(url, json=payload, headers=HEADERS, timeout=aiohttp.ClientTimeout(total=5)) as resp:
                 if resp.status == 200:
                     data = await resp.json()
                     items = data.get("result", {}).get("items", [])
                     if items:
                         return float(items[0]["price"])
-    except Exception as e:
-        logging.error(f"Bybit Buy parser error: {e}")
+        except Exception as e:
+            logging.error(f"Bybit Buy error ({url}): {e}")
     return 0.0
 
-# 🔵 ПРОДАЖА НА BINGX
-async def fetch_bingx_sell(token="USDT", currency="RUB", amount=500.0) -> float:
+# 🟢 ЗАКУПКА HTX P2P (РЕЗЕРВ ЕСЛИ BYBIT БЛОКИРУЕТ IP)
+async def fetch_htx_buy(session: aiohttp.ClientSession, token="USDT", currency="RUB", amount=500.0) -> float:
+    curr_id = 11 if currency == "RUB" else 62
+    url = f"https://otc-api.ecloud.host/v1/otc/trade/list/public?coinId=2&currency={curr_id}&tradeType=buy&currPage=1&payMethod=0&acceptOrder=-1&country=&blockType=general&online=1&range=0&amount={amount}"
+    try:
+        async with session.get(url, headers=HEADERS, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                items = data.get("data", [])
+                if items and len(items) > 0:
+                    return float(items[0]["price"])
+    except Exception as e:
+        logging.error(f"HTX Buy error: {e}")
+    return 0.0
+
+# 🔵 ПРОДАЖА BINGX
+async def fetch_bingx_sell(session: aiohttp.ClientSession, token="USDT", currency="RUB", amount=500.0) -> float:
     url = f"https://open-api.bingx.com/openApi/otc/v1/merchant/goods?fiat={currency}&crypto={token}&side=SELL&amount={amount}"
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=HEADERS, timeout=7) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    items = data.get("data", {}).get("goods", [])
-                    if items:
-                        return float(items[0]["price"])
+        async with session.get(url, headers=HEADERS, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                items = data.get("data", {}).get("goods", [])
+                if items:
+                    return float(items[0]["price"])
     except Exception as e:
-        logging.error(f"BingX Sell parser error: {e}")
+        logging.error(f"BingX Sell error: {e}")
     return 0.0
 
-# 🔵 ПРОДАЖА НА HTX (HUOBI)
-async def fetch_htx_sell(token="USDT", currency="RUB", amount=500.0) -> float:
+# 🔵 ПРОДАЖА HTX (HUOBI)
+async def fetch_htx_sell(session: aiohttp.ClientSession, token="USDT", currency="RUB", amount=500.0) -> float:
     curr_id = 11 if currency == "RUB" else 62
-    endpoints = [
-        f"https://otc-api.htx.com/v1/otc/trade/list/public?coinId=2&currency={curr_id}&tradeType=sell&currPage=1&payMethod=0&acceptOrder=-1&country=&blockType=general&online=1&range=0&amount={amount}",
-        f"https://otc-api.ecloud.host/v1/otc/trade/list/public?coinId=2&currency={curr_id}&tradeType=sell&currPage=1&payMethod=0&acceptOrder=-1&country=&blockType=general&online=1&range=0&amount={amount}"
-    ]
-    for url in endpoints:
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=HEADERS, timeout=7) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        items = data.get("data", [])
-                        if items and len(items) > 0:
-                            return float(items[0]["price"])
-        except Exception as e:
-            logging.error(f"HTX Sell parser error ({url}): {e}")
+    url = f"https://otc-api.ecloud.host/v1/otc/trade/list/public?coinId=2&currency={curr_id}&tradeType=sell&currPage=1&payMethod=0&acceptOrder=-1&country=&blockType=general&online=1&range=0&amount={amount}"
+    try:
+        async with session.get(url, headers=HEADERS, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                items = data.get("data", [])
+                if items and len(items) > 0:
+                    return float(items[0]["price"])
+    except Exception as e:
+        logging.error(f"HTX Sell error: {e}")
     return 0.0
 
-# 🔵 ПРОДАЖА НА MEXC
-async def fetch_mexc_sell(token="USDT", currency="RUB", amount=500.0) -> float:
+# 🔵 ПРОДАЖА MEXC
+async def fetch_mexc_sell(session: aiohttp.ClientSession, token="USDT", currency="RUB", amount=500.0) -> float:
     url = f"https://www.mexc.com/api/platform/p2p/api/v1/trade/list?coin={token}&currency={currency}&tradeType=SELL&page=1&limit=10&amount={amount}"
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=HEADERS, timeout=7) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    items = data.get("data", [])
-                    if items and len(items) > 0:
-                        return float(items[0]["price"])
+        async with session.get(url, headers=HEADERS, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                items = data.get("data", [])
+                if items and len(items) > 0:
+                    return float(items[0]["price"])
     except Exception as e:
-        logging.error(f"MEXC Sell parser error: {e}")
+        logging.error(f"MEXC Sell error: {e}")
     return 0.0
 
-# 🔵 ПРОДАЖА НА BITGET
-async def fetch_bitget_sell(token="USDT", currency="RUB", amount=500.0) -> float:
+# 🔵 ПРОДАЖА BITGET
+async def fetch_bitget_sell(session: aiohttp.ClientSession, token="USDT", currency="RUB", amount=500.0) -> float:
     url = "https://www.bitget.com/v1/p2p/pub/adv/list"
     payload = {
         "coin": token,
@@ -94,28 +109,43 @@ async def fetch_bitget_sell(token="USDT", currency="RUB", amount=500.0) -> float
         "amount": str(amount) if amount else ""
     }
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=payload, headers=HEADERS, timeout=7) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    items = data.get("data", {}).get("advList", [])
-                    if items:
-                        return float(items[0]["price"])
+        async with session.post(url, json=payload, headers=HEADERS, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                items = data.get("data", {}).get("advList", [])
+                if items:
+                    return float(items[0]["price"])
     except Exception as e:
-        logging.error(f"Bitget Sell parser error: {e}")
+        logging.error(f"Bitget Sell error: {e}")
     return 0.0
 
-# СКАНИРОВАНИЕ: ЗАКУП BYBIT ➔ ПРОДАЖА НА ВСЕХ БИРЖАХ
+# ПАРАЛЛЕЛЬНОЕ СКАНИРОВАНИЕ
 async def scan_p2p_spreads(token="USDT", currency="RUB", amount=500.0) -> dict:
-    buy_p = await fetch_bybit_buy(token, currency, amount)
+    async with aiohttp.ClientSession() as session:
+        results = await asyncio.gather(
+            fetch_bybit_buy(session, token, currency, amount),
+            fetch_htx_buy(session, token, currency, amount),
+            fetch_bingx_sell(session, token, currency, amount),
+            fetch_htx_sell(session, token, currency, amount),
+            fetch_mexc_sell(session, token, currency, amount),
+            fetch_bitget_sell(session, token, currency, amount),
+            return_exceptions=True
+        )
     
-    bingx_s = await fetch_bingx_sell(token, currency, amount)
-    htx_s = await fetch_htx_sell(token, currency, amount)
-    mexc_s = await fetch_mexc_sell(token, currency, amount)
-    bitget_s = await fetch_bitget_sell(token, currency, amount)
-    
+    bybit_b = results[0] if isinstance(results[0], (int, float)) else 0.0
+    htx_b = results[1] if isinstance(results[1], (int, float)) else 0.0
+    bingx_s = results[2] if isinstance(results[2], (int, float)) else 0.0
+    htx_s = results[3] if isinstance(results[3], (int, float)) else 0.0
+    mexc_s = results[4] if isinstance(results[4], (int, float)) else 0.0
+    bitget_s = results[5] if isinstance(results[5], (int, float)) else 0.0
+
+    buy_price = bybit_b if bybit_b > 0 else htx_b
+    buy_market = "Bybit" if bybit_b > 0 else ("HTX" if htx_b > 0 else "None")
+
     return {
-        "buy_price": buy_p,
+        "buy_price": buy_price,
+        "buy_market": buy_market,
+        "bybit_buy": bybit_b,
         "sells": {
             "BingX": bingx_s,
             "HTX": htx_s,
