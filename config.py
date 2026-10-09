@@ -2,9 +2,9 @@ import os
 from datetime import datetime
 
 TOKEN = os.getenv("BOT_TOKEN", "8801289219:AAGACS4CGXILYeya5B4djcEEo83YDcCuqEc")
+CRYPTO_PAY_TOKEN = os.getenv("CRYPTO_PAY_TOKEN", "645625:AAwswyNp6qEy2LIYf4vzqILSqG2rc27fWNU")
 
-# Твой Telegram ID (узнай у @userinfobot и вставь сюда, чтобы работала команда /grant)
-ADMIN_ID = 1433139527  
+ADMIN_ID = 8499310131  # Твой новый ID из @userinfobot
 
 DEFAULT_USER_CONFIG = {
     "min_net_spread": 0.5,
@@ -12,7 +12,6 @@ DEFAULT_USER_CONFIG = {
     "currency": "RUB",
     "crypto": "USDT",
     "is_active": False,
-    # Новые юзеры стартуют без подписки
     "subscription_type": "Нет подписки",
     "expire_date": "Нет",
     "is_vip": False
