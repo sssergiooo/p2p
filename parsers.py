@@ -3,105 +3,136 @@ import logging
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-    "Accept": "application/json",
-    "Content-Type": "application/json"
+    "Content-Type": "application/json",
+    "Accept": "application/json"
 }
 
-def get_p2p_link(exchange: str, trade_type: str = "BUY", crypto: str = "USDT", currency: str = "RUB", amount: float = 5000.0) -> str:
-    amount_str = str(int(amount))
-    
-    if exchange == "Bybit":
-        action_type = "1" if trade_type.upper() == "BUY" else "0"
-        return f"https://www.bybit.com/fiat/trade/otc/?actionType={action_type}&token={crypto}&fiat={currency}&amount={amount_str}"
-    
-    elif exchange == "BingX":
-        return f"https://bingx.com/ru-ru/p2p/"
-    
-    elif exchange == "HTX":
-        return f"https://www.htx.com/ru-ru/fiat-crypto/trader/"
-
-    elif exchange == "Gate":
-        return f"https://www.gate.io/ru/c2c/market"
-
-    return "https://t.me"
-
-# 1. Покупка на Bybit P2P
-async def get_bybit_p2p_price(side: str = "1", token: str = "USDT", currency: str = "RUB", amount: float = 5000.0) -> float | None:
+# 🟢 ЗАКУПКА СТРОГО НА BYBIT P2P
+async def fetch_bybit_buy(token="USDT", currency="RUB", amount=500.0) -> float:
     url = "https://api2.bybit.com/fiat/otc/item/online"
     payload = {
+        "userId": "",
         "tokenId": token,
         "currencyId": currency,
-        "side": str(side), # 1 = BUY, 0 = SELL
+        "payment": [],
+        "side": "1",  # 1 = BUY (закуп)
         "size": "10",
         "page": "1",
-        "amount": str(amount)
+        "amount": str(amount) if amount else ""
     }
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=payload, headers=HEADERS, timeout=5) as resp:
+            async with session.post(url, json=payload, headers=HEADERS, timeout=7) as resp:
                 if resp.status == 200:
                     data = await resp.json()
                     items = data.get("result", {}).get("items", [])
                     if items:
                         return float(items[0]["price"])
     except Exception as e:
-        logging.error(f"Ошибка Bybit P2P: {e}")
-    return None
+        logging.error(f"Bybit Buy parser error: {e}")
+    return 0.0
 
-# 2. Продажа на BingX P2P
-async def get_bingx_p2p_price(trade_type: str = "SELL", crypto: str = "USDT", fiat: str = "RUB", amount: float = 5000.0) -> float | None:
-    url = "https://open-api.bingx.com/openApi/p2p/v1/merchant/ad/list"
-    side = "2" if trade_type.upper() == "SELL" else "1"
-    params = {
-        "crypto": crypto,
-        "fiat": fiat,
-        "side": side,
-        "amount": str(amount),
-        "page": 1,
-        "pageSize": 10
+# 🔵 ПРОДАЖА НА BINGX
+async def fetch_bingx_sell(token="USDT", currency="RUB", amount=500.0) -> float:
+    url = f"https://open-api.bingx.com/openApi/otc/v1/merchant/goods?fiat={currency}&crypto={token}&side=SELL&amount={amount}"
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=HEADERS, timeout=7) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    items = data.get("data", {}).get("goods", [])
+                    if items:
+                        return float(items[0]["price"])
+    except Exception as e:
+        logging.error(f"BingX Sell parser error: {e}")
+    return 0.0
+
+# 🔵 ПРОДАЖА НА HTX (HUOBI)
+async def fetch_htx_sell(token="USDT", currency="RUB", amount=500.0) -> float:
+    curr_id = 11 if currency == "RUB" else 62
+    endpoints = [
+        f"https://otc-api.htx.com/v1/otc/trade/list/public?coinId=2&currency={curr_id}&tradeType=sell&currPage=1&payMethod=0&acceptOrder=-1&country=&blockType=general&online=1&range=0&amount={amount}",
+        f"https://otc-api.ecloud.host/v1/otc/trade/list/public?coinId=2&currency={curr_id}&tradeType=sell&currPage=1&payMethod=0&acceptOrder=-1&country=&blockType=general&online=1&range=0&amount={amount}"
+    ]
+    for url in endpoints:
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=HEADERS, timeout=7) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        items = data.get("data", [])
+                        if items and len(items) > 0:
+                            return float(items[0]["price"])
+        except Exception as e:
+            logging.error(f"HTX Sell parser error ({url}): {e}")
+    return 0.0
+
+# 🔵 ПРОДАЖА НА MEXC
+async def fetch_mexc_sell(token="USDT", currency="RUB", amount=500.0) -> float:
+    url = f"https://www.mexc.com/api/platform/p2p/api/v1/trade/list?coin={token}&currency={currency}&tradeType=SELL&page=1&limit=10&amount={amount}"
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=HEADERS, timeout=7) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    items = data.get("data", [])
+                    if items and len(items) > 0:
+                        return float(items[0]["price"])
+    except Exception as e:
+        logging.error(f"MEXC Sell parser error: {e}")
+    return 0.0
+
+# 🔵 ПРОДАЖА НА BITGET
+async def fetch_bitget_sell(token="USDT", currency="RUB", amount=500.0) -> float:
+    url = "https://www.bitget.com/v1/p2p/pub/adv/list"
+    payload = {
+        "coin": token,
+        "fiat": currency,
+        "side": "SELL",
+        "pageNo": 1,
+        "pageSize": 10,
+        "amount": str(amount) if amount else ""
     }
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, params=params, headers=HEADERS, timeout=5) as resp:
+            async with session.post(url, json=payload, headers=HEADERS, timeout=7) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    ads = data.get("data", {}).get("ads", [])
-                    if ads:
-                        return float(ads[0]["price"])
+                    items = data.get("data", {}).get("advList", [])
+                    if items:
+                        return float(items[0]["price"])
     except Exception as e:
-        logging.error(f"Ошибка BingX P2P: {e}")
-    return None
+        logging.error(f"Bitget Sell parser error: {e}")
+    return 0.0
 
-# 3. Продажа на HTX (Huobi) P2P
-async def get_htx_p2p_price(trade_type: str = "SELL", crypto: str = "USDT", fiat: str = "RUB", amount: float = 5000.0) -> float | None:
-    url = f"https://otc-api.htx.com/v1/otc/trade/list/public?coinId=2&currency={currency_to_htx(fiat)}&tradeType={trade_type.lower()}&currPage=1&payMethod=0&acceptOrder=-1&country=0&blockType=general&online=1&range=0&amount={amount}"
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=HEADERS, timeout=5) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    ads = data.get("data", [])
-                    if ads:
-                        return float(ads[0]["price"])
-    except Exception as e:
-        logging.error(f"Ошибка HTX P2P: {e}")
-    return None
-
-def currency_to_htx(curr: str) -> int:
-    # Идентификаторы валют в HTX API
-    mapping = {"RUB": 11, "KZT": 14}
-    return mapping.get(curr, 11)
-
-async def scan_p2p_spreads(token: str = "USDT", currency: str = "RUB", amount: float = 5000.0) -> dict:
-    bybit_buy = await get_bybit_p2p_price(side="1", token=token, currency=currency, amount=amount)
+# СКАНИРОВАНИЕ: ЗАКУП BYBIT ➔ ПРОДАЖА НА ВСЕХ БИРЖАХ
+async def scan_p2p_spreads(token="USDT", currency="RUB", amount=500.0) -> dict:
+    buy_p = await fetch_bybit_buy(token, currency, amount)
     
-    bingx_sell = await get_bingx_p2p_price(trade_type="SELL", crypto=token, fiat=currency, amount=amount)
-    htx_sell = await get_htx_p2p_price(trade_type="SELL", crypto=token, fiat=currency, amount=amount)
-
+    bingx_s = await fetch_bingx_sell(token, currency, amount)
+    htx_s = await fetch_htx_sell(token, currency, amount)
+    mexc_s = await fetch_mexc_sell(token, currency, amount)
+    bitget_s = await fetch_bitget_sell(token, currency, amount)
+    
     return {
-        "buy_price": bybit_buy,
+        "buy_price": buy_p,
         "sells": {
-            "BingX": bingx_sell,
-            "HTX": htx_sell
+            "BingX": bingx_s,
+            "HTX": htx_s,
+            "MEXC": mexc_s,
+            "Bitget": bitget_s
         }
     }
+
+def get_p2p_link(market: str, side: str, token: str, currency: str, amount: float) -> str:
+    if market == "Bybit":
+        return f"https://www.bybit.com/fiat/trade/otc/?actionType=1&token={token}&fiat={currency}"
+    elif market == "BingX":
+        return "https://bingx.com/en-us/p2p/"
+    elif market == "HTX":
+        return "https://c2c.htx.com/fiat-crypto/trade"
+    elif market == "MEXC":
+        return "https://www.mexc.com/p2p"
+    elif market == "Bitget":
+        return "https://www.bitget.com/p2p-trade"
+    return "https://t.me"
