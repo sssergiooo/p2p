@@ -14,7 +14,6 @@ from math_utils import calculate_net_spread
 
 router = Router()
 
-# Инициализация Crypto Pay
 crypto_pay = AioCryptoPay(token=CRYPTO_PAY_TOKEN, network=Networks.MAIN_NET)
 
 def get_main_keyboard(user_id: int) -> InlineKeyboardMarkup:
@@ -133,7 +132,6 @@ async def toggle_monitor(call: CallbackQuery):
     await call.answer(f"Авто-сканер {status_str}", show_alert=True)
     await call.message.edit_reply_markup(reply_markup=get_main_keyboard(user_id))
 
-# --- МЕНЮ НАСТРОЙКИ ФИЛЬТРОВ И ЛИМИТОВ ---
 @router.callback_query(F.data == "change_limits")
 async def show_limit_options(call: CallbackQuery):
     cfg = get_user(call.from_user.id)
@@ -206,10 +204,8 @@ async def show_limit_options(call: CallbackQuery):
 async def set_currency(call: CallbackQuery):
     curr = call.data.split("_")[2]
     update_user_field(call.from_user.id, "currency", curr)
-    
     default_amount = 500.0 if curr == "RUB" else 900.0
     update_user_field(call.from_user.id, "amount", default_amount)
-
     await call.answer(f"Валюта изменена на {curr}", show_alert=True)
     await show_limit_options(call)
 
@@ -219,14 +215,3 @@ async def set_amount(call: CallbackQuery):
     update_user_field(call.from_user.id, "amount", amt)
     cfg = get_user(call.from_user.id)
     curr_symbol = "₽" if cfg["currency"] == "RUB" else "₸"
-    await call.answer(f"Лимит ордера установлен: {int(amt):,} {curr_symbol}".replace(",", " "), show_alert=True)
-    await show_limit_options(call)
-
-@router.callback_query(F.data.startswith("set_bank_"))
-async def set_bank(call: CallbackQuery):
-    bank = call.data.split("_")[2]
-    update_user_field(call.from_user.id, "payment_method", bank)
-    await call.answer(f"Способ оплаты: {bank}", show_alert=True)
-    await show_limit_options(call)
-
-@router.callback
