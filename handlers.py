@@ -432,7 +432,7 @@ async def cmd_test_scan(message: Message):
 
         if buy_price:
             for market, sell_p in sells.items():
-                if sell_p:
+                if sell_p and sell_p > 0:
                     calc = calculate_net_spread(buy_price, sell_p, amt)
                     res_text += f"🔵 <b>{market} (Продажа):</b> {sell_p:.2f} | Спред: <b>{calc['net_spread']}%</b>\n"
                 else:
