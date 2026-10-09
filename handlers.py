@@ -184,9 +184,9 @@ async def show_limit_options(call: CallbackQuery):
                 InlineKeyboardButton(text="🌐 Все банки (ALL)", callback_data="set_bank_ALL")
             ],
             [
+                InlineKeyboardButton(text="🎯 Спред 0.1%", callback_data="set_spread_0.1"),
                 InlineKeyboardButton(text="🎯 Спред 0.3%", callback_data="set_spread_0.3"),
-                InlineKeyboardButton(text="🎯 Спред 0.5%", callback_data="set_spread_0.5"),
-                InlineKeyboardButton(text="🎯 Спред 1.0%", callback_data="set_spread_1.0")
+                InlineKeyboardButton(text="🎯 Спред 0.5%", callback_data="set_spread_0.5")
             ],
             [
                 InlineKeyboardButton(text="📊 От 5 ордеров", callback_data="set_orders_5"),
@@ -404,6 +404,40 @@ async def refresh_spread(call: CallbackQuery):
         await call.answer("✅ Данные обновлены!")
     except Exception:
         await call.answer("Курс не изменился.")
+
+@router.message(Command("test_scan"))
+async def cmd_test_scan(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    
+    await message.answer("🔎 <b>Запуск тестового сканирования...</b>\nЗапрашиваю курсы с Bybit (Закуп) и бирж Продажи (BingX, HTX, MEXC, Bitget)...", parse_mode="HTML")
+    
+    cfg = get_user(message.from_user.id)
+    curr = cfg["currency"]
+    amt = cfg["amount"]
+    
+    data = await scan_p2p_spreads(token="USDT", currency=curr, amount=amt)
+    buy_price = data.get("buy_price")
+    sells = data.get("sells", {})
+    
+    res_text = (
+        f"📊 <b>РЕЗУЛЬТАТЫ СКАНИРОВАНИЯ</b>\n"
+        f"Валюта: <b>{curr}</b> | Сумма: <b>{int(amt)}</b>\n\n"
+        f"🟢 <b>Bybit (Покупка):</b> {f'{buy_price:.2f}' if buy_price else '❌ Ошибка / Блок IP'}\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+    )
+    
+    if buy_price:
+        for market, sell_p in sells.items():
+            if sell_p:
+                calc = calculate_net_spread(buy_price, sell_p, amt)
+                res_text += f"🔵 <b>{market} (Продажа):</b> {sell_p:.2f} | Спред: <b>{calc['net_spread']}%</b>\n"
+            else:
+                res_text += f"🔵 <b>{market} (Продажа):</b> ❌ Нет ответа / 0.00\n"
+    else:
+        res_text += "⚠️ <i>Bybit не вернул цену. Возможно, IP блокируется.</i>"
+        
+    await message.answer(res_text, parse_mode="HTML")
 
 @router.message(Command("grant_vip"))
 async def cmd_grant_vip(message: Message):
