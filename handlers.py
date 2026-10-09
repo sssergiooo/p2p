@@ -18,8 +18,6 @@ crypto_pay = AioCryptoPay(token=CRYPTO_PAY_TOKEN, network=Networks.MAIN_NET)
 
 def get_main_keyboard(user_id: int) -> InlineKeyboardMarkup:
     cfg = get_user(user_id)
-    has_vip = is_user_vip(user_id)
-    
     toggle_text = "🔴 Остановить монитор" if cfg["is_active"] else "🚀 Запустить авто-сканер"
 
     return InlineKeyboardMarkup(
@@ -89,7 +87,10 @@ async def show_profile(call: CallbackQuery):
             [InlineKeyboardButton(text="◀️ Назад в меню", callback_data="back_main")]
         ]
     )
-    await call.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    try:
+        await call.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    except Exception:
+        pass
 
 @router.callback_query(F.data == "back_main")
 async def back_to_main(call: CallbackQuery):
@@ -114,7 +115,10 @@ async def back_to_main(call: CallbackQuery):
         "<i>Для запуска мониторинга необходима активная VIP-подписка.</i>"
     ).replace(",", " ")
     
-    await call.message.edit_text(text, parse_mode="HTML", reply_markup=get_main_keyboard(user_id))
+    try:
+        await call.message.edit_text(text, parse_mode="HTML", reply_markup=get_main_keyboard(user_id))
+    except Exception:
+        pass
 
 @router.callback_query(F.data == "toggle_monitor")
 async def toggle_monitor(call: CallbackQuery):
@@ -130,7 +134,10 @@ async def toggle_monitor(call: CallbackQuery):
     
     status_str = "запущен 🟢" if new_status else "остановлен 🔴"
     await call.answer(f"Авто-сканер {status_str}", show_alert=True)
-    await call.message.edit_reply_markup(reply_markup=get_main_keyboard(user_id))
+    try:
+        await call.message.edit_reply_markup(reply_markup=get_main_keyboard(user_id))
+    except Exception:
+        pass
 
 @router.callback_query(F.data == "change_limits")
 async def show_limit_options(call: CallbackQuery):
@@ -198,20 +205,241 @@ async def show_limit_options(call: CallbackQuery):
         f"Мин. ордеров продавца: <b>{cfg['min_orders']}</b>"
     ).replace(",", " ")
 
-    await call.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    try:
+        await call.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    except Exception:
+        pass
 
 @router.callback_query(F.data.startswith("set_curr_"))
 async def set_currency(call: CallbackQuery):
     curr = call.data.split("_")[2]
-    update_user_field(call.from_user.id, "currency", curr)
+    user_id = call.from_user.id
+    update_user_field(user_id, "currency", curr)
+    
     default_amount = 500.0 if curr == "RUB" else 900.0
-    update_user_field(call.from_user.id, "amount", default_amount)
+    update_user_field(user_id, "amount", default_amount)
+
     await call.answer(f"Валюта изменена на {curr}", show_alert=True)
     await show_limit_options(call)
 
 @router.callback_query(F.data.startswith("set_amount_"))
 async def set_amount(call: CallbackQuery):
     amt = float(call.data.split("_")[2])
-    update_user_field(call.from_user.id, "amount", amt)
-    cfg = get_user(call.from_user.id)
+    user_id = call.from_user.id
+    update_user_field(user_id, "amount", amt)
+    
+    cfg = get_user(user_id)
     curr_symbol = "₽" if cfg["currency"] == "RUB" else "₸"
+    await call.answer(f"Лимит ордера установлен: {int(amt):,} {curr_symbol}".replace(",", " "), show_alert=True)
+    await show_limit_options(call)
+
+@router.callback_query(F.data.startswith("set_bank_"))
+async def set_bank(call: CallbackQuery):
+    bank = call.data.split("_")[2]
+    user_id = call.from_user.id
+    update_user_field(user_id, "payment_method", bank)
+    await call.answer(f"Способ оплаты: {bank}", show_alert=True)
+    await show_limit_options(call)
+
+@router.callback_query(F.data.startswith("set_spread_"))
+async def set_spread(call: CallbackQuery):
+    val = float(call.data.split("_")[2])
+    user_id = call.from_user.id
+    update_user_field(user_id, "min_net_spread", val)
+    await call.answer(f"Мин. спред: {val}%", show_alert=True)
+    await show_limit_options(call)
+
+@router.callback_query(F.data.startswith("set_orders_"))
+async def set_orders(call: CallbackQuery):
+    num = int(call.data.split("_")[2])
+    user_id = call.from_user.id
+    update_user_field(user_id, "min_orders", num)
+    await call.answer(f"Минимум сделок продавца: {num}", show_alert=True)
+    await show_limit_options(call)
+
+@router.callback_query(F.data == "buy_vip")
+async def buy_vip_menu(call: CallbackQuery):
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="💎 VIP 30 дней — 5 USDT (Crypto Bot)", callback_data="pay_crypto_30")],
+            [InlineKeyboardButton(text="👑 VIP Навсегда — 15 USDT (Crypto Bot)", callback_data="pay_crypto_forever")],
+            [InlineKeyboardButton(text="⭐ VIP 30 дней — 250 Stars", callback_data="pay_stars_30")],
+            [InlineKeyboardButton(text="⭐ VIP Навсегда — 750 Stars", callback_data="pay_stars_forever")],
+            [InlineKeyboardButton(text="◀️ Назад", callback_data="back_main")]
+        ]
+    )
+    
+    text = (
+        "💎 <b>ОФОРМЛЕНИЕ VIP-ПОДПИСКИ</b>\n\n"
+        "🤖 <b>Оплата криптовалютой (@CryptoBot):</b>\n"
+        "└ 1 месяц (30 дней) — <b>5 USDT</b>\n"
+        "└ Навсегда — <b>15 USDT</b>\n"
+        "<i>Моментальная авто-выдача подписки сразу после оплаты!</i>\n\n"
+        "⭐ <b>Оплата через Telegram Stars:</b>\n"
+        "└ 1 месяц (30 дней) — <b>250 ⭐ Stars</b>\n"
+        "└ Навсегда — <b>750 ⭐ Stars</b>"
+    )
+    
+    try:
+        await call.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    except Exception:
+        pass
+
+@router.callback_query(F.data.startswith("pay_crypto_"))
+async def process_crypto_pay(call: CallbackQuery):
+    plan = call.data.split("_")[2]
+    amount = 5.0 if plan == "30" else 15.0
+    days = 30 if plan == "30" else 3650
+    user_id = call.from_user.id
+
+    try:
+        invoice = await crypto_pay.create_invoice(
+            asset='USDT',
+            amount=amount,
+            description=f"VIP Доступ в P2P Сканер ({plan} дн)",
+            payload=f"{user_id}_{days}"
+        )
+
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="💳 Оплатить в @CryptoBot", url=invoice.bot_invoice_url)],
+                [InlineKeyboardButton(text="✅ Я оплатил (Проверить)", callback_data=f"check_crypto_{invoice.invoice_id}_{days}")],
+                [InlineKeyboardButton(text="◀️ Отмена", callback_data="buy_vip")]
+            ]
+        )
+
+        await call.message.edit_text(
+            f"🚀 <b>Счет на оплату создан!</b>\n\n"
+            f"Сумма: <b>{amount} USDT</b>\n"
+            f"Тариф: <b>{'30 дней' if plan == '30' else 'Навсегда'}</b>\n\n"
+            f"Нажмите кнопку ниже для оплаты в Crypto Bot, затем нажмите «Проверить».",
+            parse_mode="HTML",
+            reply_markup=kb
+        )
+    except Exception:
+        await call.answer("❌ Ошибка создания счета. Проверьте CRYPTO_PAY_TOKEN.", show_alert=True)
+
+@router.callback_query(F.data.startswith("check_crypto_"))
+async def check_crypto_pay(call: CallbackQuery):
+    _, _, invoice_id, days = call.data.split("_")
+    invoice_id = int(invoice_id)
+    days = int(days)
+
+    try:
+        invoices = await crypto_pay.get_invoices(invoice_ids=invoice_id)
+        if invoices and invoices.status == 'paid':
+            set_user_vip(call.from_user.id, days)
+            await call.message.edit_text(
+                "🎉 <b>Оплата успешно подтверждена! VIP-статус активирован.</b>\n"
+                "Теперь вы можете запустить авто-сканер в главном меню.",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🚀 В главное меню", callback_data="back_main")]])
+            )
+        else:
+            await call.answer("❌ Оплата еще не поступила! Оплатите счет в @CryptoBot.", show_alert=True)
+    except Exception:
+        await call.answer("Ошибка проверки счета.", show_alert=True)
+
+@router.callback_query(F.data.startswith("pay_stars_"))
+async def process_stars_payment(call: CallbackQuery):
+    plan = call.data.split("_")[2]
+    title = "VIP Доступ на 30 дней" if plan == "30" else "VIP Доступ Навсегда"
+    price = 250 if plan == "30" else 750
+    
+    prices = [LabeledPrice(label=title, amount=price)]
+    await call.message.answer_invoice(
+        title=title,
+        description="Полный доступ к сканеру и уведомлениям",
+        payload=f"vip_{plan}",
+        currency="XTR",
+        prices=prices
+    )
+    await call.answer()
+
+@router.pre_checkout_query()
+async def pre_checkout(query: PreCheckoutQuery):
+    await query.answer(ok=True)
+
+@router.message(F.successful_payment)
+async def successful_payment(message: Message):
+    payload = message.successful_payment.invoice_payload
+    days = 30 if "30" in payload else 3650
+    set_user_vip(message.from_user.id, days)
+    await message.answer("🎉 <b>Оплата прошла успешно! VIP-статус активирован.</b>", parse_mode="HTML")
+
+@router.callback_query(F.data.startswith("refresh_spread_"))
+async def refresh_spread(call: CallbackQuery):
+    _, _, curr, amt, sell_market = call.data.split("_")
+    amt = float(amt)
+
+    await call.answer("🔄 Проверяем актуальные стаканы...")
+    
+    data = await scan_p2p_spreads(token="USDT", currency=curr, amount=amt)
+    buy_price = data.get("buy_price")
+    sell_price = data.get("sells", {}).get(sell_market)
+
+    if not buy_price or not sell_price:
+        await call.answer("❌ Связка уже закрыта или стакан изменился!", show_alert=True)
+        return
+
+    calc = calculate_net_spread(buy_price, sell_price, amt)
+    curr_symbol = "₽" if curr == "RUB" else "₸"
+
+    alert_text = (
+        "⚡ <b>P2P SIGNAL DETECTED (ОБНОВЛЕНО)</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        f"💱 <b>Инструмент:</b> <code>USDT / {curr}</code>\n"
+        f"🎯 <b>Лимит:</b> <code>{int(amt):,} {curr_symbol}</code>\n\n"
+        "🟢 <b>ПОКУПКА (Bybit P2P):</b>\n"
+        f"└ Курс: <code>{buy_price:.2f} {curr_symbol}</code>\n\n"
+        f"🔵 <b>ПРОДАЖА ({sell_market} P2P):</b>\n"
+        f"└ Курс: <code>{sell_price:.2f} {curr_symbol}</code>\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        f"📈 <b>Актуальный спред:</b> <code>+{calc['net_spread']}%</code>\n"
+        f"💵 <b>Профит с круга:</b> <code>~{int(calc['net_profit']):,} {curr_symbol}</code>"
+    ).replace(",", " ")
+
+    try:
+        await call.message.edit_text(alert_text, parse_mode="HTML", reply_markup=call.message.reply_markup)
+        await call.answer("✅ Данные обновлены!")
+    except Exception:
+        await call.answer("Курс не изменился.")
+
+@router.message(Command("grant_vip"))
+async def cmd_grant_vip(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    try:
+        args = message.text.split()
+        target_id = int(args[1])
+        days = int(args[2])
+        set_user_vip(target_id, days)
+        await message.answer(f"✅ Пользователю <code>{target_id}</code> успешно выдан VIP на {days} дней!", parse_mode="HTML")
+    except Exception:
+        await message.answer("❌ Ошибка! Формат: <code>/grant_vip USER_ID DAYS</code>")
+
+@router.message(Command("broadcast"))
+async def cmd_broadcast(message: Message, bot):
+    if message.from_user.id != ADMIN_ID:
+        return
+    text_to_send = message.text.replace("/broadcast", "").strip()
+    if not text_to_send:
+        await message.answer("Ошибка! Использование: <code>/broadcast Ваш текст</code>")
+        return
+
+    conn = sqlite3.connect("database.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT user_id FROM users")
+    users = cursor.fetchall()
+    conn.close()
+
+    count = 0
+    for u in users:
+        try:
+            await bot.send_message(u[0], f"📢 <b>ОПОВЕЩЕНИЕ ОТ АДМИНИСТРАЦИИ:</b>\n\n{text_to_send}", parse_mode="HTML")
+            count += 1
+            await asyncio.sleep(0.05)
+        except Exception:
+            pass
+
+    await message.answer(f"🚀 Сообщение доставлено {count} пользователям!")
