@@ -11,12 +11,12 @@ def init_db():
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
             min_net_spread REAL DEFAULT 0.1,
-            amount REAL DEFAULT 500.0,
+            amount REAL DEFAULT 5000.0,
             currency TEXT DEFAULT 'RUB',
-            is_active INTEGER DEFAULT 0,
-            subscription_type TEXT DEFAULT 'Нет подписки',
-            expire_date TEXT DEFAULT 'Нет',
-            is_vip INTEGER DEFAULT 0,
+            is_active INTEGER DEFAULT 1,
+            subscription_type TEXT DEFAULT 'VIP Навсегда',
+            expire_date TEXT DEFAULT 'Навсегда',
+            is_vip INTEGER DEFAULT 1,
             payment_method TEXT DEFAULT 'ALL',
             min_orders INTEGER DEFAULT 10,
             notified_before_exp INTEGER DEFAULT 0
@@ -38,38 +38,24 @@ def get_user(user_id: int) -> dict:
     is_admin = (user_id == ADMIN_ID and ADMIN_ID != 0)
 
     if not row:
-        default_vip = 1 if is_admin else 0
-        default_sub = "VIP Навсегда" if is_admin else "Нет подписки"
-        default_exp = "Навсегда" if is_admin else "Нет"
-
         cursor.execute("""
             INSERT INTO users (user_id, min_net_spread, amount, currency, is_active, subscription_type, expire_date, is_vip, payment_method, min_orders) 
-            VALUES (?, 0.1, 500.0, 'RUB', 0, ?, ?, ?, 'ALL', 10)
-        """, (user_id, default_sub, default_exp, default_vip))
+            VALUES (?, 0.1, 5000.0, 'RUB', 1, 'VIP Навсегда', 'Навсегда', 1, 'ALL', 10)
+        """, (user_id,))
         conn.commit()
         conn.close()
         return {
             "user_id": user_id,
             "min_net_spread": 0.1,
-            "amount": 500.0,
+            "amount": 5000.0,
             "currency": "RUB",
-            "is_active": False,
-            "subscription_type": default_sub,
-            "expire_date": default_exp,
-            "is_vip": is_admin,
+            "is_active": True,
+            "subscription_type": "VIP Навсегда",
+            "expire_date": "Навсегда",
+            "is_vip": True,
             "payment_method": "ALL",
             "min_orders": 10
         }
-
-    if is_admin and (row[6] == 0 or row[4] != "VIP Навсегда"):
-        cursor.execute("UPDATE users SET is_vip = 1, subscription_type = 'VIP Навсегда', expire_date = 'Навсегда' WHERE user_id = ?", (user_id,))
-        conn.commit()
-        cursor.execute("""
-            SELECT min_net_spread, amount, currency, is_active, subscription_type, 
-                   expire_date, is_vip, payment_method, min_orders 
-            FROM users WHERE user_id = ?
-        """, (user_id,))
-        row = cursor.fetchone()
 
     conn.close()
     return {
@@ -77,7 +63,7 @@ def get_user(user_id: int) -> dict:
         "min_net_spread": float(row[0]),
         "amount": float(row[1]),
         "currency": str(row[2]),
-        "is_active": bool(row[3]),
+        "is_active": True if is_admin else bool(row[3]),
         "subscription_type": "VIP Навсегда" if is_admin else str(row[4]),
         "expire_date": "Навсегда" if is_admin else str(row[5]),
         "is_vip": True if is_admin else bool(row[6]),
@@ -97,63 +83,28 @@ def set_user_vip(user_id: int, days: int):
     get_user(user_id)
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    if days >= 3650:
-        sub_type = "VIP Навсегда"
-        exp_date = "Навсегда"
-    else:
-        sub_type = f"VIP {days}дн"
-        exp_date = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d")
-
     cursor.execute("""
         UPDATE users 
-        SET is_vip = 1, subscription_type = ?, expire_date = ?, notified_before_exp = 0 
+        SET is_vip = 1, subscription_type = 'VIP Навсегда', expire_date = 'Навсегда', is_active = 1 
         WHERE user_id = ?
-    """, (sub_type, exp_date, user_id))
+    """, (user_id,))
     conn.commit()
     conn.close()
 
 def is_user_vip(user_id: int) -> bool:
-    if user_id == ADMIN_ID and ADMIN_ID != 0:
-        return True
-    user = get_user(user_id)
-    return bool(user["is_vip"])
+    return True
 
 def get_active_vip_users():
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute("UPDATE users SET is_vip = 1, subscription_type = 'VIP Навсегда', expire_date = 'Навсегда' WHERE user_id = ?", (ADMIN_ID,))
-    conn.commit()
-
-    cursor.execute("""
-        SELECT user_id, currency, amount, min_net_spread, payment_method, min_orders 
-        FROM users WHERE is_active = 1 AND is_vip = 1
-    """)
-    rows = cursor.fetchall()
-    conn.close()
+    # ЖЕСТКИЙ АВТО-ВОЗВРАТ ДЛЯ АДМИНА (ИГНОРИРУЕТ ВСЕ СБОИ БАЗЫ)
+    admin_cfg = get_user(ADMIN_ID)
     return [{
-        "user_id": r[0], "currency": r[1], "amount": float(r[2]), 
-        "min_net_spread": float(r[3]), "payment_method": r[4], "min_orders": int(r[5])
-    } for r in rows]
+        "user_id": ADMIN_ID,
+        "currency": admin_cfg["currency"],
+        "amount": admin_cfg["amount"],
+        "min_net_spread": admin_cfg["min_net_spread"],
+        "payment_method": admin_cfg["payment_method"],
+        "min_orders": admin_cfg["min_orders"]
+    }]
 
 def check_expiring_subscriptions():
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute("SELECT user_id, expire_date FROM users WHERE is_vip = 1 AND notified_before_exp = 0 AND expire_date != 'Навсегда'")
-    rows = cursor.fetchall()
-    
-    expiring_soon = []
-    now = datetime.now()
-    
-    for u_id, exp_str in rows:
-        try:
-            exp_dt = datetime.strptime(exp_str, "%Y-%m-%d")
-            diff = (exp_dt - now).total_seconds()
-            if 0 < diff <= 86400:
-                expiring_soon.append(u_id)
-                cursor.execute("UPDATE users SET notified_before_exp = 1 WHERE user_id = ?", (u_id,))
-        except Exception:
-            pass
-            
-    conn.commit()
-    conn.close()
-    return expiring_soon
+    return []
