@@ -1,7 +1,3 @@
-import os
-
-# Бот берет твой ID из переменных Render, которые ты только что ввел!
-ADMIN_ID = int(os.getenv("ADMIN_ID", 0))  
 import sqlite3
 import asyncio
 from aiogram import Router, F
@@ -10,11 +6,17 @@ from aiogram.types import (
     LabeledPrice, PreCheckoutQuery
 )
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from config import ADMIN_ID
 from database import get_user, update_user_field, set_user_vip, is_user_vip
 from parsers import scan_p2p_spreads
 from math_utils import calculate_net_spread
 
 router = Router()
+
+class SupportState(StatesGroup):
+    waiting_for_message = State()
 
 def get_main_keyboard(user_id: int) -> InlineKeyboardMarkup:
     cfg = get_user(user_id)
@@ -23,7 +25,7 @@ def get_main_keyboard(user_id: int) -> InlineKeyboardMarkup:
     toggle_text = "🔴 Остановить монитор" if cfg["is_active"] else "🚀 Запустить авто-сканер"
     
     support_button = (
-        InlineKeyboardButton(text="👨‍💻 Поддержка", url="https://t.me/kitsunababe")
+        InlineKeyboardButton(text="👨‍💻 Поддержка", callback_data="open_support")
         if has_vip
         else InlineKeyboardButton(text="👨‍💻 Поддержка (VIP)", callback_data="no_vip_support")
     )
@@ -43,7 +45,8 @@ def get_main_keyboard(user_id: int) -> InlineKeyboardMarkup:
     )
 
 @router.message(Command("start"))
-async def cmd_start(message: Message):
+async def cmd_start(message: Message, state: FSMContext):
+    await state.clear()
     user_id = message.from_user.id
     cfg = get_user(user_id)
     has_vip = is_user_vip(user_id)
@@ -99,7 +102,8 @@ async def show_profile(call: CallbackQuery):
     await call.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
 
 @router.callback_query(F.data == "back_main")
-async def back_to_main(call: CallbackQuery):
+async def back_to_main(call: CallbackQuery, state: FSMContext):
+    await state.clear()
     user_id = call.from_user.id
     cfg = get_user(user_id)
     has_vip = is_user_vip(user_id)
@@ -154,7 +158,6 @@ async def show_limit_options(call: CallbackQuery):
         InlineKeyboardButton(text="🏦 Halyk Bank", callback_data="set_bank_Halyk")
     ]
 
-    # Лимиты от минималки до крупных сумм
     amount_buttons_row1 = [
         InlineKeyboardButton(text="💰 500 ₽", callback_data="set_amount_500"),
         InlineKeyboardButton(text="💰 5k ₽", callback_data="set_amount_5000"),
@@ -214,7 +217,6 @@ async def set_currency(call: CallbackQuery):
     curr = call.data.split("_")[2]
     update_user_field(call.from_user.id, "currency", curr)
     
-    # Автоматом ставим минималку при смене валюты
     default_amount = 500.0 if curr == "RUB" else 900.0
     update_user_field(call.from_user.id, "amount", default_amount)
 
@@ -251,16 +253,13 @@ async def set_orders(call: CallbackQuery):
     await call.answer(f"Минимум сделок продавца: {num}", show_alert=True)
     await show_limit_options(call)
 
-# --- МЕНЮ ОПЛАТЫ ---
+# --- МЕНЮ ОПЛАТЫ И АНОНИМНОЙ СВЯЗИ ---
 @router.callback_query(F.data == "buy_vip")
 async def buy_vip_menu(call: CallbackQuery):
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="💳 1 месяц — 500 ₽ / 2500 ₸ (Админ)", url="https://t.me/kitsunababe")
-            ],
-            [
-                InlineKeyboardButton(text="💳 Навсегда — 1500 ₽ / 7500 ₸ (Админ)", url="https://t.me/kitsunababe")
+                InlineKeyboardButton(text="💳 Запросить реквизиты (Карта / Перевод)", callback_data="req_manual_pay")
             ],
             [
                 InlineKeyboardButton(text="⭐ VIP 30 дней — 250 Stars", callback_data="pay_stars_30")
@@ -276,10 +275,10 @@ async def buy_vip_menu(call: CallbackQuery):
     
     text = (
         "💎 <b>ОФОРМЛЕНИЕ VIP-ПОДПИСКИ</b>\n\n"
-        "💳 <b>Оплата картой / переводом (Админ):</b>\n"
+        "💳 <b>Оплата картой / переводом:</b>\n"
         "└ 1 месяц (30 дней) — <b>500 ₽ / 2 500 ₸</b>\n"
         "└ Навсегда — <b>1 500 ₽ / 7 500 ₸</b>\n"
-        "<i>Нажми нужную кнопку с суммой выше, чтобы написать админу!</i>\n\n"
+        "<i>Нажми кнопку «Запросить реквизиты» — админ вышлет данные прямо в этот чат.</i>\n\n"
         "⭐ <b>Автоматическая оплата через Telegram Stars:</b>\n"
         "└ 1 месяц (30 дней) — <b>250 ⭐ Stars</b>\n"
         "└ Навсегда — <b>750 ⭐ Stars</b>\n"
@@ -288,6 +287,67 @@ async def buy_vip_menu(call: CallbackQuery):
     
     await call.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
 
+@router.callback_query(F.data == "req_manual_pay")
+async def req_manual_pay(call: CallbackQuery, state: FSMContext, bot):
+    await state.set_state(SupportState.waiting_for_message)
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="❌ Отмена", callback_data="back_main")]])
+    await call.message.edit_text(
+        "📝 <b>Напишите сообщение администратору.</b>\n\n"
+        "Укажите, какой тариф вас интересует (1 месяц или Навсегда) и удобный способ оплаты (Сбер/Т-Банк/Kaspi/Halyk).\n"
+        "Администратор ответит вам прямым сообщением в этот чат.",
+        parse_mode="HTML",
+        reply_markup=kb
+    )
+
+@router.callback_query(F.data == "open_support")
+async def open_support(call: CallbackQuery, state: FSMContext):
+    await state.set_state(SupportState.waiting_for_message)
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="❌ Отмена", callback_data="back_main")]])
+    await call.message.edit_text(
+        "💬 <b>СЛУЖБА ПОДДЕРЖКИ (АНОНИМНО)</b>\n\n"
+        "Отправьте ваше сообщение, вопрос или скриншот прямо сюда. Поддержка ответит вам прямо через бота.",
+        parse_mode="HTML",
+        reply_markup=kb
+    )
+
+# Анонимная пересылка сообщений Админу
+@router.message(SupportState.waiting_for_message)
+async def process_support_msg(message: Message, state: FSMContext, bot):
+    user_id = message.from_user.id
+    await state.clear()
+    
+    # Пересылаем сообщение администратору
+    try:
+        await bot.send_message(
+            ADMIN_ID,
+            f"📩 <b>НОВОЕ СООБЩЕНИЕ ОТ ЮЗЕРА</b> <code>{user_id}</code>:\n\n{message.text or '[Медиафайл]'}\n\n"
+            f"<i>Чтобы ответить юзеру, отправь команду:</i>\n<code>/reply {user_id} Ваш ответ</code>",
+            parse_mode="HTML"
+        )
+        await message.answer("✅ <b>Сообщение отправлено!</b> Администратор ответит вам прямо в этот чат.", parse_mode="HTML", reply_markup=get_main_keyboard(user_id))
+    except Exception as e:
+        await message.answer("❌ Ошибка отправки сообщения администратору. Попробуйте позже.")
+
+# Ответ Админа юзеру через бота
+@router.message(Command("reply"))
+async def cmd_reply(message: Message, bot):
+    if message.from_user.id != ADMIN_ID:
+        return
+    try:
+        args = message.text.split(maxsplit=2)
+        target_id = int(args[1])
+        reply_text = args[2]
+
+        await bot.send_message(
+            target_id,
+            f"👨‍💻 <b>ОТВЕТ АДМИНИСТРАТОРА:</b>\n\n{reply_text}",
+            parse_mode="HTML"
+        )
+        await message.answer(f"✅ Ответ успешно доставлен юзеру <code>{target_id}</code>!")
+    except Exception:
+        await message.answer("❌ Ошибка! Формат команды:\n<code>/reply USER_ID Ваш текст ответа</code>")
+
+# Оплата через Stars
 @router.callback_query(F.data.startswith("pay_stars_"))
 async def process_stars_payment(call: CallbackQuery):
     plan = call.data.split("_")[2]
