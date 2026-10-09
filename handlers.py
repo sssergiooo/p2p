@@ -390,7 +390,7 @@ async def refresh_spread(call: CallbackQuery):
         "━━━━━━━━━━━━━━━━━━\n"
         f"💱 <b>Инструмент:</b> <code>USDT / {curr}</code>\n"
         f"🎯 <b>Лимит:</b> <code>{int(amt):,} {curr_symbol}</code>\n\n"
-        "🟢 <b>ПОКУПКА (Bybit P2P):</b>\n"
+        f"🟢 <b>ПОКУПКА ({data.get('buy_market', 'P2P')}):</b>\n"
         f"└ Курс: <code>{buy_price:.2f} {curr_symbol}</code>\n\n"
         f"🔵 <b>ПРОДАЖА ({sell_market} P2P):</b>\n"
         f"└ Курс: <code>{sell_price:.2f} {curr_symbol}</code>\n"
@@ -407,37 +407,42 @@ async def refresh_spread(call: CallbackQuery):
 
 @router.message(Command("test_scan"))
 async def cmd_test_scan(message: Message):
-    if message.from_user.id != ADMIN_ID:
-        return
-    
-    await message.answer("🔎 <b>Запуск тестового сканирования...</b>\nЗапрашиваю курсы с Bybit (Закуп) и бирж Продажи (BingX, HTX, MEXC, Bitget)...", parse_mode="HTML")
-    
-    cfg = get_user(message.from_user.id)
-    curr = cfg["currency"]
-    amt = cfg["amount"]
-    
-    data = await scan_p2p_spreads(token="USDT", currency=curr, amount=amt)
-    buy_price = data.get("buy_price")
-    sells = data.get("sells", {})
-    
-    res_text = (
-        f"📊 <b>РЕЗУЛЬТАТЫ СКАНИРОВАНИЯ</b>\n"
-        f"Валюта: <b>{curr}</b> | Сумма: <b>{int(amt)}</b>\n\n"
-        f"🟢 <b>Bybit (Покупка):</b> {f'{buy_price:.2f}' if buy_price else '❌ Ошибка / Блок IP'}\n"
-        "━━━━━━━━━━━━━━━━━━\n"
+    msg = await message.answer(
+        "🔎 <b>Запуск мгновенного сканирования...</b>\n"
+        "Параллельно запрашиваю Bybit, HTX, BingX, MEXC, Bitget...",
+        parse_mode="HTML"
     )
-    
-    if buy_price:
-        for market, sell_p in sells.items():
-            if sell_p:
-                calc = calculate_net_spread(buy_price, sell_p, amt)
-                res_text += f"🔵 <b>{market} (Продажа):</b> {sell_p:.2f} | Спред: <b>{calc['net_spread']}%</b>\n"
-            else:
-                res_text += f"🔵 <b>{market} (Продажа):</b> ❌ Нет ответа / 0.00\n"
-    else:
-        res_text += "⚠️ <i>Bybit не вернул цену. Возможно, IP блокируется.</i>"
-        
-    await message.answer(res_text, parse_mode="HTML")
+
+    try:
+        cfg = get_user(message.from_user.id)
+        curr = cfg["currency"]
+        amt = cfg["amount"]
+
+        data = await scan_p2p_spreads(token="USDT", currency=curr, amount=amt)
+        buy_price = data.get("buy_price")
+        buy_market = data.get("buy_market", "P2P")
+        sells = data.get("sells", {})
+
+        res_text = (
+            f"📊 <b>РЕЗУЛЬТАТЫ СКАНИРОВАНИЯ</b>\n"
+            f"Валюта: <b>{curr}</b> | Сумма: <b>{int(amt)}</b>\n\n"
+            f"🟢 <b>Закупка ({buy_market}):</b> {f'{buy_price:.2f}' if buy_price else '❌ Ошибка'}\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+        )
+
+        if buy_price:
+            for market, sell_p in sells.items():
+                if sell_p:
+                    calc = calculate_net_spread(buy_price, sell_p, amt)
+                    res_text += f"🔵 <b>{market} (Продажа):</b> {sell_p:.2f} | Спред: <b>{calc['net_spread']}%</b>\n"
+                else:
+                    res_text += f"🔵 <b>{market} (Продажа):</b> ❌ Нет ответа / 0.00\n"
+        else:
+            res_text += "⚠️ <i>Не удалось получить цену закупки ни с одной биржи.</i>"
+
+        await msg.edit_text(res_text, parse_mode="HTML")
+    except Exception as e:
+        await msg.edit_text(f"❌ <b>Ошибка при парсинге:</b> <code>{e}</code>", parse_mode="HTML")
 
 @router.message(Command("grant_vip"))
 async def cmd_grant_vip(message: Message):
