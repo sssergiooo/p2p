@@ -4,7 +4,7 @@ from datetime import datetime
 TOKEN = os.getenv("BOT_TOKEN", "8801289219:AAGACS4CGXILYeya5B4djcEEo83YDcCuqEc")
 
 # Твой Telegram ID (узнай у @userinfobot и вставь сюда, чтобы работала команда /grant)
-ADMIN_ID = 8499310131  
+ADMIN_ID = 1433139527  
 
 DEFAULT_USER_CONFIG = {
     "min_net_spread": 0.5,
