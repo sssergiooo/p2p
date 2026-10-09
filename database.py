@@ -10,7 +10,7 @@ def init_db():
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
-            min_net_spread REAL DEFAULT 0.5,
+            min_net_spread REAL DEFAULT 0.1,
             amount REAL DEFAULT 500.0,
             currency TEXT DEFAULT 'RUB',
             is_active INTEGER DEFAULT 0,
@@ -44,13 +44,13 @@ def get_user(user_id: int) -> dict:
 
         cursor.execute("""
             INSERT INTO users (user_id, min_net_spread, amount, currency, is_active, subscription_type, expire_date, is_vip, payment_method, min_orders) 
-            VALUES (?, 0.5, 500.0, 'RUB', 0, ?, ?, ?, 'ALL', 10)
+            VALUES (?, 0.1, 500.0, 'RUB', 0, ?, ?, ?, 'ALL', 10)
         """, (user_id, default_sub, default_exp, default_vip))
         conn.commit()
         conn.close()
         return {
             "user_id": user_id,
-            "min_net_spread": 0.5,
+            "min_net_spread": 0.1,
             "amount": 500.0,
             "currency": "RUB",
             "is_active": False,
@@ -61,7 +61,6 @@ def get_user(user_id: int) -> dict:
             "min_orders": 10
         }
 
-    # Жесткая гарантия вечного VIP для админа
     if is_admin and (row[6] == 0 or row[4] != "VIP Навсегда"):
         cursor.execute("UPDATE users SET is_vip = 1, subscription_type = 'VIP Навсегда', expire_date = 'Навсегда' WHERE user_id = ?", (user_id,))
         conn.commit()
@@ -122,7 +121,6 @@ def is_user_vip(user_id: int) -> bool:
 def get_active_vip_users():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    # Жесткая принудительная активация VIP админа
     cursor.execute("UPDATE users SET is_vip = 1, subscription_type = 'VIP Навсегда', expire_date = 'Навсегда' WHERE user_id = ?", (ADMIN_ID,))
     conn.commit()
 
