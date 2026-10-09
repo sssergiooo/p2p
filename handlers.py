@@ -6,29 +6,22 @@ from aiogram.types import (
     LabeledPrice, PreCheckoutQuery
 )
 from aiogram.filters import Command
-from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
-from config import ADMIN_ID
+from aiocryptopay import CryptoPay, Networks
+from config import ADMIN_ID, CRYPTO_PAY_TOKEN
 from database import get_user, update_user_field, set_user_vip, is_user_vip
 from parsers import scan_p2p_spreads
 from math_utils import calculate_net_spread
 
 router = Router()
 
-class SupportState(StatesGroup):
-    waiting_for_message = State()
+# Инициализация Crypto Pay
+crypto_pay = CryptoPay(token=CRYPTO_PAY_TOKEN, network=Networks.MAIN_NET)
 
 def get_main_keyboard(user_id: int) -> InlineKeyboardMarkup:
     cfg = get_user(user_id)
     has_vip = is_user_vip(user_id)
     
     toggle_text = "🔴 Остановить монитор" if cfg["is_active"] else "🚀 Запустить авто-сканер"
-    
-    support_button = (
-        InlineKeyboardButton(text="👨‍💻 Поддержка", callback_data="open_support")
-        if has_vip
-        else InlineKeyboardButton(text="👨‍💻 Поддержка (VIP)", callback_data="no_vip_support")
-    )
 
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -38,15 +31,13 @@ def get_main_keyboard(user_id: int) -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="⚙️ Фильтры & Лимиты", callback_data="change_limits")
             ],
             [
-                InlineKeyboardButton(text="💎 Купить VIP / Stars", callback_data="buy_vip"),
-                support_button
+                InlineKeyboardButton(text="💎 Купить VIP (Crypto / Stars)", callback_data="buy_vip")
             ]
         ]
     )
 
 @router.message(Command("start"))
-async def cmd_start(message: Message, state: FSMContext):
-    await state.clear()
+async def cmd_start(message: Message):
     user_id = message.from_user.id
     cfg = get_user(user_id)
     has_vip = is_user_vip(user_id)
@@ -102,8 +93,7 @@ async def show_profile(call: CallbackQuery):
     await call.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
 
 @router.callback_query(F.data == "back_main")
-async def back_to_main(call: CallbackQuery, state: FSMContext):
-    await state.clear()
+async def back_to_main(call: CallbackQuery):
     user_id = call.from_user.id
     cfg = get_user(user_id)
     has_vip = is_user_vip(user_id)
@@ -253,13 +243,16 @@ async def set_orders(call: CallbackQuery):
     await call.answer(f"Минимум сделок продавца: {num}", show_alert=True)
     await show_limit_options(call)
 
-# --- МЕНЮ ОПЛАТЫ И АНОНИМНОЙ СВЯЗИ ---
+# --- МЕНЮ ОПЛАТЫ CRYPTO BOT И STARS ---
 @router.callback_query(F.data == "buy_vip")
 async def buy_vip_menu(call: CallbackQuery):
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="💳 Запросить реквизиты (Карта / Перевод)", callback_data="req_manual_pay")
+                InlineKeyboardButton(text="💎 VIP 30 дней — 5 USDT (Crypto Bot)", callback_data="pay_crypto_30")
+            ],
+            [
+                InlineKeyboardButton(text="👑 VIP Навсегда — 15 USDT (Crypto Bot)", callback_data="pay_crypto_forever")
             ],
             [
                 InlineKeyboardButton(text="⭐ VIP 30 дней — 250 Stars", callback_data="pay_stars_30")
@@ -275,77 +268,73 @@ async def buy_vip_menu(call: CallbackQuery):
     
     text = (
         "💎 <b>ОФОРМЛЕНИЕ VIP-ПОДПИСКИ</b>\n\n"
-        "💳 <b>Оплата картой / переводом:</b>\n"
-        "└ 1 месяц (30 дней) — <b>500 ₽ / 2 500 ₸</b>\n"
-        "└ Навсегда — <b>1 500 ₽ / 7 500 ₸</b>\n"
-        "<i>Нажми кнопку «Запросить реквизиты» — админ вышлет данные прямо в этот чат.</i>\n\n"
-        "⭐ <b>Автоматическая оплата через Telegram Stars:</b>\n"
+        "🤖 <b>Оплата криптовалютой (@CryptoBot):</b>\n"
+        "└ 1 месяц (30 дней) — <b>5 USDT</b>\n"
+        "└ Навсегда — <b>15 USDT</b>\n"
+        "<i>Моментальная авто-выдача подписки сразу после оплаты!</i>\n\n"
+        "⭐ <b>Оплата через Telegram Stars:</b>\n"
         "└ 1 месяц (30 дней) — <b>250 ⭐ Stars</b>\n"
-        "└ Навсегда — <b>750 ⭐ Stars</b>\n"
-        "<i>Моментальная авто-активация при покупке через Stars!</i>"
+        "└ Навсегда — <b>750 ⭐ Stars</b>"
     )
     
     await call.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
 
-@router.callback_query(F.data == "req_manual_pay")
-async def req_manual_pay(call: CallbackQuery, state: FSMContext, bot):
-    await state.set_state(SupportState.waiting_for_message)
-    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="❌ Отмена", callback_data="back_main")]])
-    await call.message.edit_text(
-        "📝 <b>Напишите сообщение администратору.</b>\n\n"
-        "Укажите, какой тариф вас интересует (1 месяц или Навсегда) и удобный способ оплаты (Сбер/Т-Банк/Kaspi/Halyk).\n"
-        "Администратор ответит вам прямым сообщением в этот чат.",
-        parse_mode="HTML",
-        reply_markup=kb
-    )
+# Создание инвойса в Crypto Bot
+@router.callback_query(F.data.startswith("pay_crypto_"))
+async def process_crypto_pay(call: CallbackQuery):
+    plan = call.data.split("_")[2]
+    amount = 5.0 if plan == "30" else 15.0
+    days = 30 if plan == "30" else 3650
+    user_id = call.from_user.id
 
-@router.callback_query(F.data == "open_support")
-async def open_support(call: CallbackQuery, state: FSMContext):
-    await state.set_state(SupportState.waiting_for_message)
-    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="❌ Отмена", callback_data="back_main")]])
-    await call.message.edit_text(
-        "💬 <b>СЛУЖБА ПОДДЕРЖКИ (АНОНИМНО)</b>\n\n"
-        "Отправьте ваше сообщение, вопрос или скриншот прямо сюда. Поддержка ответит вам прямо через бота.",
-        parse_mode="HTML",
-        reply_markup=kb
-    )
-
-# Анонимная пересылка сообщений Админу
-@router.message(SupportState.waiting_for_message)
-async def process_support_msg(message: Message, state: FSMContext, bot):
-    user_id = message.from_user.id
-    await state.clear()
-    
-    # Пересылаем сообщение администратору
     try:
-        await bot.send_message(
-            ADMIN_ID,
-            f"📩 <b>НОВОЕ СООБЩЕНИЕ ОТ ЮЗЕРА</b> <code>{user_id}</code>:\n\n{message.text or '[Медиафайл]'}\n\n"
-            f"<i>Чтобы ответить юзеру, отправь команду:</i>\n<code>/reply {user_id} Ваш ответ</code>",
-            parse_mode="HTML"
+        invoice = await crypto_pay.create_invoice(
+            asset='USDT',
+            amount=amount,
+            description=f"VIP Доступ в P2P Сканер ({plan} дн)",
+            payload=f"{user_id}_{days}"
         )
-        await message.answer("✅ <b>Сообщение отправлено!</b> Администратор ответит вам прямо в этот чат.", parse_mode="HTML", reply_markup=get_main_keyboard(user_id))
+
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="💳 Оплатить в @CryptoBot", url=invoice.bot_invoice_url)],
+                [InlineKeyboardButton(text="✅ Я оплатил (Проверить)", callback_data=f"check_crypto_{invoice.invoice_id}_{days}")],
+                [InlineKeyboardButton(text="◀️ Отмена", callback_data="buy_vip")]
+            ]
+        )
+
+        await call.message.edit_text(
+            f"🚀 <b>Счет на оплату создан!</b>\n\n"
+            f"Сумма: <b>{amount} USDT</b>\n"
+            f"Тариф: <b>{'30 дней' if plan == '30' else 'Навсегда'}</b>\n\n"
+            f"Нажмите кнопку ниже для оплаты в Crypto Bot, затем нажмите «Проверить».",
+            parse_mode="HTML",
+            reply_markup=kb
+        )
     except Exception as e:
-        await message.answer("❌ Ошибка отправки сообщения администратору. Попробуйте позже.")
+        await call.answer("❌ Ошибка создания счета. Проверьте CRYPTO_PAY_TOKEN.", show_alert=True)
 
-# Ответ Админа юзеру через бота
-@router.message(Command("reply"))
-async def cmd_reply(message: Message, bot):
-    if message.from_user.id != ADMIN_ID:
-        return
+# Проверка оплаты счета в Crypto Bot
+@router.callback_query(F.data.startswith("check_crypto_"))
+async def check_crypto_pay(call: CallbackQuery):
+    _, _, invoice_id, days = call.data.split("_")
+    invoice_id = int(invoice_id)
+    days = int(days)
+
     try:
-        args = message.text.split(maxsplit=2)
-        target_id = int(args[1])
-        reply_text = args[2]
-
-        await bot.send_message(
-            target_id,
-            f"👨‍💻 <b>ОТВЕТ АДМИНИСТРАТОРА:</b>\n\n{reply_text}",
-            parse_mode="HTML"
-        )
-        await message.answer(f"✅ Ответ успешно доставлен юзеру <code>{target_id}</code>!")
+        invoices = await crypto_pay.get_invoices(invoice_ids=invoice_id)
+        if invoices and invoices.status == 'paid':
+            set_user_vip(call.from_user.id, days)
+            await call.message.edit_text(
+                "🎉 <b>Оплата успешно подтверждена! VIP-статус активирован.</b>\n"
+                "Теперь вы можете запустить авто-сканер в главном меню.",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🚀 В главное меню", callback_data="back_main")]])
+            )
+        else:
+            await call.answer("❌ Оплата еще не поступила! Оплатите счет в @CryptoBot.", show_alert=True)
     except Exception:
-        await message.answer("❌ Ошибка! Формат команды:\n<code>/reply USER_ID Ваш текст ответа</code>")
+        await call.answer("Ошибка проверки счета.", show_alert=True)
 
 # Оплата через Stars
 @router.callback_query(F.data.startswith("pay_stars_"))
@@ -374,10 +363,6 @@ async def successful_payment(message: Message):
     days = 30 if "30" in payload else 3650
     set_user_vip(message.from_user.id, days)
     await message.answer("🎉 <b>Оплата прошла успешно! VIP-статус активирован.</b>", parse_mode="HTML")
-
-@router.callback_query(F.data == "no_vip_support")
-async def no_vip_support(call: CallbackQuery):
-    await call.answer("❌ Поддержка доступна только для пользователей с VIP-подпиской!", show_alert=True)
 
 # --- ОБНОВЛЕНИЕ СТАКАНА ---
 @router.callback_query(F.data.startswith("refresh_spread_"))
@@ -432,7 +417,7 @@ async def cmd_grant_vip(message: Message):
         set_user_vip(target_id, days)
         await message.answer(f"✅ Пользователю <code>{target_id}</code> успешно выдан VIP на {days} дней!", parse_mode="HTML")
     except Exception:
-        await message.answer("❌ Ошибка! Формат: <code>/grant_vip USER_ID DAYS</code>\nПример: <code>/grant_vip 123456789 30</code> (или 3650 для 'Навсегда')")
+        await message.answer("❌ Ошибка! Формат: <code>/grant_vip USER_ID DAYS</code>\nПример: <code>/grant_vip 123456789 30</code>")
 
 @router.message(Command("broadcast"))
 async def cmd_broadcast(message: Message, bot):
